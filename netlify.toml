@@ -1,6 +1,6 @@
 [build]
 base = "frontend"
-publish = "."
+publish = "frontend"
 command = ""
 
 [functions]

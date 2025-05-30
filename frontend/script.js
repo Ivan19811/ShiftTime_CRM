@@ -1,9 +1,6 @@
-const CURRENT_VERSION = "1.0.1"; // ⚠️ Це має відповідати тому, що у тебе в коді
-const VERSION_URL = "https://shiftime.com.ua/version.json"; // ⚠️ Посилання на робочий сайт
+const CURRENT_VERSION = "1.0.0";
+const VERSION_URL = "./version.json"; // Відносно index.html
 
-document.getElementById("sendBtn").addEventListener("click", async () => {
-  const value = document.getElementById("inputValue").value;
-  const status = document.getElementById("status");
 
 const versionValue = document.getElementById("versionValue");
 const refreshBtn = document.getElementById("refreshBtn");
@@ -11,9 +8,11 @@ const refreshBtn = document.getElementById("refreshBtn");
 async function checkVersionUpdate() {
   try {
     const res = await fetch(VERSION_URL);
+    console.log("📡 fetch response object:", res);
     const data = await res.json();
-    const latestVersion = data.version || data["версія"];
+    console.log("📦 JSON з версії:", data);
 
+    const latestVersion = data.version || data["version"];
     versionValue.textContent = CURRENT_VERSION;
 
     if (latestVersion !== CURRENT_VERSION) {
@@ -22,15 +21,18 @@ async function checkVersionUpdate() {
       refreshBtn.textContent = `🔁 Оновити до ${latestVersion}`;
     }
   } catch (err) {
-    console.error("Помилка перевірки версії:", err);
+    console.error("❌ Помилка перевірки версії:", err);
   }
 }
-
 checkVersionUpdate();
 
 refreshBtn.addEventListener("click", () => {
-  alert("🛠 Оновлення буде виконано вручну або через Git merge dev → main");
+  location.reload();
 });
+
+document.getElementById("sendBtn").addEventListener("click", async () => {
+  const value = document.getElementById("inputValue").value;
+  const status = document.getElementById("status");
 
   try {
     const response = await fetch("https://shifttimecrm-test-backend-v2.onrender.com/write", {
@@ -54,10 +56,6 @@ refreshBtn.addEventListener("click", () => {
   }
 });
 
-document.getElementById("refreshBtn").addEventListener("click", () => {
-  location.reload();
-});
-
 async function getLastValue() {
   try {
     const res = await fetch("https://shifttimecrm-test-backend-v2.onrender.com/last");
@@ -73,4 +71,10 @@ async function getLastValue() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", getLastValue);
+window.addEventListener("DOMContentLoaded", () => {
+   checkVersionUpdate();
+  getLastValue();
+ 
+});
+
+
