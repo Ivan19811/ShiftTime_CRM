@@ -6,7 +6,7 @@ const app = express();
 
 // ✅ Правильна CORS-конфігурація для Netlify-домену
 const corsOptions = {
-  origin: "https://crm.shifttime.com.ua/",
+  origin: "https://crm.shifttime.com.ua",
 
   
   methods: "GET,POST",
