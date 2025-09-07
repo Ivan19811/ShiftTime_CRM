@@ -1,101 +1,77 @@
-// backend/index.js
-import express from 'express';
 import fetch from 'node-fetch';
+import express from 'express';
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
 
-// ---- GAS WebApp URL (у тебе вже є)
-const SHEETS_WEBAPP_URL =
-  (process.env.SHEETS_WEBAPP_URL || '').replace(/\/+$/, '');
+const SHEETS_WEBAPP_URL = process.env.SHEETS_WEBAPP_URL || ''; // твій GAS /exec
 
-// ====== CORS allowlist: динамічна конфігурація ======
-let allowlistRules = new Set([
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'https://shifttime-crm-test.netlify.app'
-]);
+// --- util: pattern *.domain → RegExp
+const toRegex = (pat) =>
+  new RegExp('^' + pat
+    .trim()
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\\\*/g, '.*') + '$');
 
-const parseRules = (str) =>
-  String(str || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+let cfg = { allow: [], allowRx: [], fetchedAt: 0 };
 
-async function refreshConfig() {
+async function refreshConfig(force = false) {
+  const freshEnough = Date.now() - cfg.fetchedAt < 60_000; // 60s TTL
+  if (!force && freshEnough) return cfg;
+
   try {
-    let fromSheet = [];
-    if (SHEETS_WEBAPP_URL) {
-      const url = `${SHEETS_WEBAPP_URL}?res=kv&mode=list`;
-      const r = await fetch(url);
-      const j = await r.json();
-      const kv = Array.isArray(j)
-        ? j.reduce((a, it) => { a[it.key] = it.value; return a; }, {})
-        : (j || {});
-      // можна задавати в CONFIG ключ CORS_ALLOWLIST або ALLOWLIST
-      fromSheet = parseRules(kv.CORS_ALLOWLIST || kv.ALLOWLIST);
-    }
+    const url = `${SHEETS_WEBAPP_URL.replace(/\/+$/,'')}?res=kv&mode=list`;
+    const r = await fetch(url);
+    const list = await r.json();
 
-    const fromEnv = parseRules(process.env.CORS_ALLOWLIST);
-    const merged = [...new Set([...fromEnv, ...fromSheet])];
+    // очікуємо або масив {key,value}, або вже об’єкт
+    const kv = Array.isArray(list)
+      ? Object.fromEntries(list.map(i => [i.key, i.value]))
+      : (list || {});
 
-    if (merged.length) {
-      allowlistRules = new Set(merged);
-    }
-    console.log('[CORS] allowlist =', [...allowlistRules]);
+    // джерела allowlist: CONFIG → env override
+    const raw = (kv.CORS_ALLOWLIST || process.env.CORS_ALLOWLIST || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    cfg = {
+      allow: raw.filter(s => !s.includes('*')),
+      allowRx: raw.filter(s => s.includes('*')).map(toRegex),
+      fetchedAt: Date.now(),
+    };
+
+    console.log('[CORS] allowlist =', cfg.allow, ' | patterns =', raw.filter(s=>s.includes('*')));
   } catch (e) {
-    console.warn('[CORS] refreshConfig failed:', e.message);
+    console.warn('[CORS] refresh failed:', e.message);
   }
+  return cfg;
 }
 
-// стартове завантаження + періодичне оновлення
-await refreshConfig().catch(()=>{});
-setInterval(refreshConfig, 10 * 60 * 1000); // раз на 10 хв
-
-function wildcardToRegex(rule) {
-  if (rule.startsWith('regex:')) return new RegExp(rule.slice(6));
-  // підтримка *.domain.com
-  const esc = rule
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\\\*/g, '.*');
-  return new RegExp(`^${esc}$`);
-}
 function isAllowed(origin) {
   if (!origin) return false;
-  const rules = [...allowlistRules].map(wildcardToRegex);
-  return rules.some(re => re.test(origin));
+  if (cfg.allow.includes(origin)) return true;
+  return cfg.allowRx.some(rx => rx.test(origin));
 }
 
-// CORS middleware
-app.use((req, res, next) => {
+// --- CORS middleware (дзеркалимо саме той origin, який дозволено)
+app.use(async (req, res, next) => {
+  await refreshConfig(); // ледь-ледь дешеве; кешується
   const origin = req.headers.origin;
+
   if (origin && isAllowed(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader(
-      'Access-Control-Allow-Methods',
-      'GET,POST,OPTIONS'
-    );
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With'
-    );
-    res.setHeader('Access-Control-Max-Age', '86400');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
   }
-  return next();
+  next();
 });
 
-// (необов'язково) ручне оновлення конфіга без перезапуску
-app.post('/admin/reload-config', async (req, res) => {
-  // додай простий секрет, якщо треба
-  await refreshConfig();
-  res.json({ ok: true, allowlist: [...allowlistRules] });
+app.use(express.json({ limit: '1mb' }));
+
+app.get('/ping', async (_, res) => {
+  await refreshConfig(true);
+  res.json({ ok: true, allow: cfg.allow, patterns: cfg.allowRx.map(r => r.source) });
 });
-
-// ---- далі твій існуючий код
-app.get('/ping', (_, res) => res.type('text/plain').send('ok'));
-
-// ... /send, /writeNumber і т.д. без змін
-
